@@ -2,7 +2,7 @@
 
 import { useService } from "@web/core/utils/hooks";
 
-const { Component } = owl;
+const { Component , status } = owl;
 
 export class SendSMSButton extends Component {
     setup() {
@@ -10,7 +10,11 @@ export class SendSMSButton extends Component {
         this.user = useService("user");
         this.title = this.env._t("Send SMS Text Message");
     }
-    onClick() {
+    get phoneHref() {
+        return "sms:" + this.props.value.replace(/\s+/g, "");
+    }
+    async onClick() {
+        await this.props.record.save();
         this.action.doAction({
             type: "ir.actions.act_window",
             target: "new",
@@ -26,7 +30,10 @@ export class SendSMSButton extends Component {
             }
         }, {
             onClose: () => {
-                this.props.record.model.load()
+                if (status(this) !== "destroyed") {
+                    this.props.record.load();
+                    this.props.record.model.notify();
+                }
             },
         });
     }

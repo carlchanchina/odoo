@@ -49,20 +49,16 @@ class ConnectionManager(Thread):
                 self.pairing_uuid = result['pairing_uuid']
             elif all(key in result for key in ['url', 'token', 'db_uuid', 'enterprise_code']):
                 self._connect_to_server(result['url'], result['token'], result['db_uuid'], result['enterprise_code'])
-        except Exception as e:
-            _logger.error('Could not reach iot-proxy.odoo.com')
-            _logger.error('A error encountered : %s ' % e)
+        except Exception:
+            _logger.exception('Could not reach iot-proxy.odoo.com')
 
     def _connect_to_server(self, url, token, db_uuid, enterprise_code):
-        if db_uuid and enterprise_code:
-            helpers.add_credential(db_uuid, enterprise_code)
-
         # Save DB URL and token
-        subprocess.check_call([get_resource_path('point_of_sale', 'tools/posbox/configuration/connect_to_server.sh'), url, '', token, 'noreboot'])
+        helpers.save_conf_server(url, token, db_uuid, enterprise_code)
         # Notify the DB, so that the kanban view already shows the IoT Box
         manager.send_alldevices()
         # Restart to checkout the git branch, get a certificate, load the IoT handlers...
-        subprocess.check_call(["sudo", "service", "odoo", "restart"])
+        helpers.odoo_restart(2)
 
     def _refresh_displays(self):
         """Refresh all displays to hide the pairing code"""

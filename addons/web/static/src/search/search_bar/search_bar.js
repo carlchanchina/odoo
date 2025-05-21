@@ -187,7 +187,8 @@ export class SearchBar extends Component {
                 // Pass
             }
         }
-        const options = await this.orm.call(field.relation, "name_search", domain, {
+        const options = await this.orm.call(field.relation, "name_search", [], {
+            args: domain,
             context: field.context,
             limit: 8,
             name: query.trim(),
@@ -239,9 +240,11 @@ export class SearchBar extends Component {
         this.inputRef.el.focus();
     }
 
-    resetState() {
+    resetState(options = { focus: true }) {
         this.computeState({ expanded: [], focusedIndex: 0, query: "", subItems: [] });
-        this.inputRef.el.focus();
+        if (options.focus) {
+            this.inputRef.el.focus();
+        }
     }
 
     /**
@@ -442,7 +445,7 @@ export class SearchBar extends Component {
      */
     onWindowClick(ev) {
         if (this.items.length && !this.root.el.contains(ev.target)) {
-            this.resetState();
+            this.resetState({ focus: false });
         }
     }
 

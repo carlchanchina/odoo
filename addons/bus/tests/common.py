@@ -11,11 +11,12 @@ except ImportError:
     websocket = None
 
 import odoo.tools
-from odoo.tests import HOST, common
+from odoo.tests import HOST, HttpCase, TEST_CURSOR_COOKIE_NAME
 from ..websocket import CloseCode, WebsocketConnectionHandler
 
 
-class WebsocketCase(common.HttpCase):
+class WebsocketCase(HttpCase):
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -23,6 +24,8 @@ class WebsocketCase(common.HttpCase):
             cls._logger.warning("websocket-client module is not installed")
             raise unittest.SkipTest("websocket-client module is not installed")
         cls._WEBSOCKET_URL = f"ws://{HOST}:{odoo.tools.config['http_port']}/websocket"
+        websocket_allowed_patch = patch.object(WebsocketConnectionHandler, "websocket_allowed", return_value=True)
+        cls.startClassPatcher(websocket_allowed_patch)
 
     def setUp(self):
         super().setUp()
@@ -68,11 +71,13 @@ class WebsocketCase(common.HttpCase):
         if 'cookie' not in kwargs:
             self.session = self.authenticate(None, None)
             kwargs['cookie'] = f'session_id={self.session.sid}'
-        if 'timeout' not in kwargs:
-            kwargs['timeout'] = 5
+        kwargs['cookie'] += f';{TEST_CURSOR_COOKIE_NAME}={self.http_request_key}'
+        kwargs['timeout'] = 10  # keep a large timeout to avoid aving a websocket request escaping the test
         ws = websocket.create_connection(
             type(self)._WEBSOCKET_URL, *args, **kwargs
         )
+        ws.ping()
+        ws.recv_data_frame(control_frame=True) # pong
         self._websockets.add(ws)
         return ws
 

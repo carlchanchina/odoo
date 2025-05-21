@@ -29,9 +29,9 @@ class TestAccountAnalyticAccount(AccountTestInvoicingCommon):
             'company_id': False,
         })
 
-    def create_invoice(self, partner, product):
+    def create_invoice(self, partner, product, move_type='out_invoice'):
         return self.env['account.move'].create([{
-            'move_type': 'out_invoice',
+            'move_type': move_type,
             'partner_id': partner.id,
             'date': '2017-01-01',
             'invoice_date': '2017-01-01',
@@ -210,3 +210,81 @@ class TestAccountAnalyticAccount(AccountTestInvoicingCommon):
         invoice.invoice_line_ids.analytic_distribution = {self.analytic_account_b.id: 0.9}
         invoice.action_post()
         self.assertEqual(invoice.state, 'posted')
+
+    def test_mandatory_plan_validation_mass_posting(self):
+        """
+        In case of mass posting, we should still check for mandatory analytic plans. This may raise a RedirectWarning,
+        if more than one entry was selected for posting, or a ValidationError if only one entry was selected.
+        """
+        invoice1 = self.create_invoice(self.partner_a, self.product_a)
+        invoice2 = self.create_invoice(self.partner_b, self.product_a)
+        self.default_plan.write({
+            'applicability_ids': [Command.create({
+                'business_domain': 'invoice',
+                'product_categ_id': self.product_a.categ_id.id,
+                'applicability': 'mandatory',
+            })]
+        })
+
+        vam = self.env['validate.account.move'].create({'force_post': True})
+        for invoices in [invoice1, invoice1 | invoice2]:
+            with self.subTest(invoices=invoices):
+                with self.assertRaises(Exception):
+                    vam.with_context({
+                        'active_model': 'account.move',
+                        'active_ids': [invoice1.id, invoice2.id],
+                        'validate_analytic': True,
+                    }).validate_move()
+                self.assertTrue('posted' not in invoices.mapped('state'))
+
+    def test_set_anaylytic_distribution_posted_line(self):
+        """
+        Test that we can set the analytic distribution on the product line of a move, when the line has tax with
+        repartition lines used in tax closing. Although the change can not be applied on the tax line, we should
+        not raise any error.
+        """
+        tax = self.tax_purchase_a.copy({
+            'name': 'taXXX',
+            'invoice_repartition_line_ids': [
+                Command.create({
+                    'repartition_type': 'base',
+                    'use_in_tax_closing': False,
+                }),
+                Command.create({
+                    'repartition_type': 'tax',
+                    'factor_percent': 50,
+                    'use_in_tax_closing': False,
+                }),
+                Command.create({
+                    'repartition_type': 'tax',
+                    'factor_percent': 50,
+                    'account_id': self.company_data['default_account_tax_purchase'].id,
+                    'use_in_tax_closing': True,
+                }),
+            ],
+            'refund_repartition_line_ids': [
+                Command.create({
+                    'repartition_type': 'base',
+                    'use_in_tax_closing': False,
+                }),
+                Command.create({
+                    'repartition_type': 'tax',
+                    'factor_percent': 50,
+                    'use_in_tax_closing': False,
+                }),
+                Command.create({
+                    'repartition_type': 'tax',
+                    'factor_percent': 50,
+                    'account_id': self.company_data['default_account_tax_purchase'].id,
+                    'use_in_tax_closing': True,
+                }),
+            ],
+        })
+
+        bill = self.create_invoice(self.partner_a, self.product_a, move_type='in_invoice')
+        bill.invoice_line_ids.tax_ids = [Command.set(tax.ids)]
+        bill.action_post()
+
+        line = bill.line_ids.filtered(lambda l: l.display_type == 'product')
+        line.write({'analytic_distribution': {self.analytic_account_a.id: 100}})
+        self.assertEqual(line.analytic_distribution, {str(self.analytic_account_a.id): 100})

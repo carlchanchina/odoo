@@ -3,7 +3,7 @@
 
 import time
 
-from odoo import api, fields, models
+from odoo import api, fields, models, _
 
 
 class ProductProduct(models.Model):
@@ -38,7 +38,7 @@ class ProductProduct(models.Model):
     normal_cost = fields.Float(compute='_compute_product_margin_fields_values', string='Normal Cost',
         help="Sum of Multiplication of Cost price and quantity of Vendor Bills")
     total_margin = fields.Float(compute='_compute_product_margin_fields_values', string='Total Margin',
-        help="Turnover - Standard price")
+        help="Turnover - Total cost")
     expected_margin = fields.Float(compute='_compute_product_margin_fields_values', string='Expected Margin',
         help="Expected Sale - Normal Cost")
     total_margin_rate = fields.Float(compute='_compute_product_margin_fields_values', string='Total Margin Rate(%)',
@@ -60,7 +60,7 @@ class ProductProduct(models.Model):
             field_no_aggr, _sep, agg = field.partition(':')
             if field_no_aggr in fields_list:
                 if agg and agg != 'sum':
-                    raise NotImplementedError('Aggregate functions other than \':sum\' are not allowed.')
+                    raise NotImplementedError(_('Aggregate functions other than \':sum\' are not allowed.'))
                 return field_no_aggr
             return field
         fields = {truncate_aggr(field) for field in fields}
@@ -105,13 +105,13 @@ class ProductProduct(models.Model):
         payment_states = ()
         if invoice_state == 'paid':
             states = ('posted',)
-            payment_states = ('in_payment', 'paid',)
+            payment_states = ('in_payment', 'paid', 'reversed')
         elif invoice_state == 'open_paid':
             states = ('posted',)
-            payment_states = ('not_paid', 'in_payment', 'paid')
+            payment_states = ('not_paid', 'in_payment', 'paid', 'reversed', 'partial')
         elif invoice_state == 'draft_open_paid':
             states = ('posted', 'draft')
-            payment_states = ('not_paid', 'in_payment', 'paid')
+            payment_states = ('not_paid', 'in_payment', 'paid', 'reversed', 'partial')
         if "force_company" in self.env.context:
             company_id = self.env.context['force_company']
         else:
@@ -120,7 +120,7 @@ class ProductProduct(models.Model):
         self.env['account.move'].flush_model(['state', 'payment_state', 'move_type', 'invoice_date', 'company_id'])
         self.env['product.template'].flush_model(['list_price'])
         sqlstr = """
-                WITH currency_rate AS ({})
+                WITH currency_rate AS MATERIALIZED ({})
                 SELECT
                     l.product_id as product_id,
                     SUM(

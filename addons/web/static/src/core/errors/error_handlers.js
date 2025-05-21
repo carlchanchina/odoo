@@ -21,48 +21,6 @@ const errorDialogRegistry = registry.category("error_dialogs");
 const errorNotificationRegistry = registry.category("error_notifications");
 
 // -----------------------------------------------------------------------------
-// CORS errors
-// -----------------------------------------------------------------------------
-
-/**
- * @param {OdooEnv} env
- * @param {UncaughError} error
- * @returns {boolean}
- */
-function corsErrorHandler(env, error) {
-    if (error instanceof UncaughtCorsError) {
-        env.services.dialog.add(NetworkErrorDialog, {
-            traceback: error.traceback,
-            message: error.message,
-            name: error.name,
-        });
-        return true;
-    }
-}
-errorHandlerRegistry.add("corsErrorHandler", corsErrorHandler, { sequence: 95 });
-
-// -----------------------------------------------------------------------------
-// Client errors
-// -----------------------------------------------------------------------------
-
-/**
- * @param {OdooEnv} env
- * @param {UncaughError} error
- * @returns {boolean}
- */
-function clientErrorHandler(env, error) {
-    if (error instanceof UncaughtClientError) {
-        env.services.dialog.add(ClientErrorDialog, {
-            traceback: error.traceback,
-            message: error.message,
-            name: error.name,
-        });
-        return true;
-    }
-}
-errorHandlerRegistry.add("clientErrorHandler", clientErrorHandler, { sequence: 96 });
-
-// -----------------------------------------------------------------------------
 // RPC errors
 // -----------------------------------------------------------------------------
 
@@ -172,44 +130,36 @@ export function lostConnectionHandler(env, error, originalError) {
 errorHandlerRegistry.add("lostConnectionHandler", lostConnectionHandler, { sequence: 98 });
 
 // -----------------------------------------------------------------------------
-// Empty rejection errors
-// -----------------------------------------------------------------------------
-
-/**
- * @param {OdooEnv} env
- * @param {UncaughError} error
- * @returns {boolean}
- */
-function emptyRejectionErrorHandler(env, error) {
-    if (!(error instanceof UncaughtPromiseError)) {
-        return false;
-    }
-    env.services.dialog.add(ClientErrorDialog, {
-        traceback: error.traceback,
-        message: error.message,
-        name: error.name,
-    });
-    return true;
-}
-errorHandlerRegistry.add("emptyRejectionErrorHandler", emptyRejectionErrorHandler, {
-    sequence: 99,
-});
-
-// -----------------------------------------------------------------------------
 // Default handler
 // -----------------------------------------------------------------------------
 
+const defaultDialogs = new Map([
+    [UncaughtClientError, ClientErrorDialog],
+    [UncaughtPromiseError, ClientErrorDialog],
+    [UncaughtCorsError, NetworkErrorDialog],
+]);
+
 /**
+ * Handles the errors based on the very general error categories emitted by the
+ * error service. Notice how we do not look at the original error at all.
+ *
  * @param {OdooEnv} env
  * @param {UncaughError} error
  * @returns {boolean}
  */
 function defaultHandler(env, error) {
-    env.services.dialog.add(ErrorDialog, {
-        traceback: error.traceback,
-        message: error.message,
-        name: error.name,
-    });
+    // As an error can occur before the dialog service (implicit service) is up and running, we have added a fallback to
+    // log any errors in the console if the dialog service hasn't been started.
+    if (env.services.dialog) {
+        const DialogComponent = defaultDialogs.get(error.constructor) || ErrorDialog;
+        env.services.dialog.add(DialogComponent, {
+            traceback: error.traceback,
+            message: error.message,
+            name: error.name,
+        });
+    } else {
+        console.error(error.traceback);
+    }
     return true;
 }
 errorHandlerRegistry.add("defaultHandler", defaultHandler, { sequence: 100 });

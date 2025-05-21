@@ -2,6 +2,7 @@
 
 import json
 import logging
+import psycopg2
 
 
 import odoo
@@ -29,7 +30,7 @@ class Home(http.Controller):
 
     @http.route('/', type='http', auth="none")
     def index(self, s_action=None, db=None, **kw):
-        if request.session.uid and not is_user_internal(request.session.uid):
+        if request.db and request.session.uid and not is_user_internal(request.session.uid):
             return request.redirect_query('/web/login_successful', query=request.params)
         return request.redirect_query('/web', query=request.params)
 
@@ -88,9 +89,15 @@ class Home(http.Controller):
         if request.httprequest.method == 'GET' and redirect and request.session.uid:
             return request.redirect(redirect)
 
-        # so it is correct if overloaded with auth="public"
-        if not request.uid:
-            request.update_env(user=odoo.SUPERUSER_ID)
+        # simulate hybrid auth=user/auth=public, despite using auth=none to be able
+        # to redirect users when no db is selected - cfr ensure_db()
+        if request.env.uid is None:
+            if request.session.uid is None:
+                # no user -> auth=public with specific website public user
+                request.env["ir.http"]._auth_method_public()
+            else:
+                # auth=user
+                request.update_env(user=request.session.uid)
 
         values = {k: v for k, v in request.params.items() if k in SIGN_UP_REQUEST_PARAMS}
         try:
@@ -119,6 +126,7 @@ class Home(http.Controller):
             values['disable_database_manager'] = True
 
         response = request.render('web.login', values)
+        response.headers['Cache-Control'] = 'no-cache'
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['Content-Security-Policy'] = "frame-ancestors 'self'"
         return response
@@ -141,10 +149,18 @@ class Home(http.Controller):
         return request.redirect(self._login_redirect(uid))
 
     @http.route('/web/health', type='http', auth='none', save_session=False)
-    def health(self):
-        data = json.dumps({
-            'status': 'pass',
-        })
+    def health(self, db_server_status=False):
+        health_info = {'status': 'pass'}
+        status = 200
+        if db_server_status:
+            try:
+                odoo.sql_db.db_connect('postgres').cursor().close()
+                health_info['db_server_status'] = True
+            except psycopg2.Error:
+                health_info['db_server_status'] = False
+                health_info['status'] = 'fail'
+                status = 500
+        data = json.dumps(health_info)
         headers = [('Content-Type', 'application/json'),
                    ('Cache-Control', 'no-store')]
-        return request.make_response(data, headers)
+        return request.make_response(data, headers, status=status)

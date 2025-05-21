@@ -6,6 +6,7 @@
     'category': 'Accounting/Payment Providers',
     'sequence': 350,
     'summary': "A Nigerian payment provider covering several African countries.",
+    'description': " ",  # Non-empty string to avoid loading the README file.
     'depends': ['payment'],
     'data': [
         'views/payment_flutterwave_templates.xml',
@@ -13,7 +14,12 @@
 
         'data/payment_provider_data.xml',
     ],
-    'application': True,
+    'assets': {
+        'web.assets_frontend': [
+            'payment_flutterwave/static/src/js/payment_form.js',
+        ],
+    },
+    'application': False,
     'post_init_hook': 'post_init_hook',
     'uninstall_hook': 'uninstall_hook',
     'license': 'LGPL-3',

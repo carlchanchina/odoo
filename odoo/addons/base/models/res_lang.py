@@ -81,6 +81,23 @@ class Lang(models.Model):
                                             'Please refer to the list of allowed directives, '
                                             'displayed when you edit a language.'))
 
+    @api.onchange('time_format', 'date_format')
+    def _onchange_format(self):
+        warning = {
+            'warning': {
+                'title': _("Using 24-hour clock format with AM/PM can cause issues."),
+                'message': _("Changing to 12-hour clock format instead."),
+                'type': 'notification'
+            }
+        }
+        for lang in self:
+            if lang.date_format and "%H" in lang.date_format and "%p" in lang.date_format:
+                lang.date_format = lang.date_format.replace("%H", "%I")
+                return warning
+            if lang.time_format and "%H" in lang.time_format and "%p" in lang.time_format:
+                lang.time_format = lang.time_format.replace("%H", "%I")
+                return warning
+
     @api.constrains('grouping')
     def _check_grouping(self):
         warning = _('The Separator Format should be like [,n] where 0 < n :starting from Unit digit. '
@@ -128,7 +145,7 @@ class Lang(models.Model):
             except locale.Error:
                 continue
         if fail:
-            lc = locale.getdefaultlocale()[0]
+            lc = locale.getlocale()[0]
             msg = 'Unable to get information for locale %s. Information from the default locale (%s) have been used.'
             _logger.warning(msg, lang, lc)
 
@@ -281,10 +298,12 @@ class Lang(models.Model):
         if 'code' in vals and any(code != vals['code'] for code in lang_codes):
             raise UserError(_("Language code cannot be modified."))
         if vals.get('active') == False:
-            if self.env['res.users'].search_count([('lang', 'in', lang_codes)]):
+            if self.env['res.users'].with_context(active_test=True).search_count([('lang', 'in', lang_codes)], limit=1):
                 raise UserError(_("Cannot deactivate a language that is currently used by users."))
-            if self.env['res.partner'].search_count([('lang', 'in', lang_codes)]):
+            if self.env['res.partner'].with_context(active_test=True).search_count([('lang', 'in', lang_codes)], limit=1):
                 raise UserError(_("Cannot deactivate a language that is currently used by contacts."))
+            if self.env['res.users'].with_context(active_test=False).search_count([('lang', 'in', lang_codes)], limit=1):
+                raise UserError(_("You cannot archive the language in which Odoo was setup as it is used by automated processes."))
             # delete linked ir.default specifying default partner's language
             self.env['ir.default'].discard_values('res.partner', 'lang', lang_codes)
 
@@ -307,6 +326,17 @@ class Lang(models.Model):
     def unlink(self):
         self.clear_caches()
         return super(Lang, self).unlink()
+
+    def copy_data(self, default=None):
+        default = dict(default or {})
+
+        if "name" not in default:
+            default["name"] = _("%s (copy)", self.name)
+        if "code" not in default:
+            default["code"] = _("%s (copy)", self.code)
+        if "url_code" not in default:
+            default["url_code"] = _("%s (copy)", self.url_code)
+        return super().copy_data(default=default)
 
     def format(self, percent, value, grouping=False, monetary=False):
         """ Format() will return the language-specific output for float values"""
@@ -348,6 +378,7 @@ class Lang(models.Model):
                 'next': {'type': 'ir.actions.act_window_close'},
             }
         }
+
 
 def split(l, counts):
     """

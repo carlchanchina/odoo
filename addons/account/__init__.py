@@ -40,10 +40,12 @@ def _auto_install_l10n(env):
             #countries using OHADA Chart of Accounts
             module_list.append('l10n_syscohada')
         elif country_code == 'GB':
-            module_list.append('l10n_uk')
+            module_list.extend(('l10n_uk', 'account_bacs'))
         elif country_code == 'DE':
             module_list.append('l10n_de_skr03')
             module_list.append('l10n_de_skr04')
+        elif country_code == 'MC':
+            module_list.append('l10n_fr')
         else:
             if env['ir.module.module'].search([('name', '=', 'l10n_' + country_code.lower())]):
                 module_list.append('l10n_' + country_code.lower())
@@ -56,7 +58,8 @@ def _auto_install_l10n(env):
             module_list.append('base_vat')
 
         module_ids = env['ir.module.module'].search([('name', 'in', module_list), ('state', '=', 'uninstalled')])
-        module_ids.sudo().button_install()
+        if module_ids:
+            module_ids.sudo().button_install()
 
 def _account_post_init(cr, registry):
     env = api.Environment(cr, SUPERUSER_ID, {})

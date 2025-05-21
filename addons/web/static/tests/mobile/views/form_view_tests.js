@@ -11,6 +11,7 @@ import {
     patchWithCleanup,
 } from "@web/../tests/helpers/utils";
 import { makeView, setupViewRegistries } from "@web/../tests/views/helpers";
+import { AttachDocumentWidget } from "@web/views/widgets/attach_document/attach_document";
 
 let fixture;
 let serverData;
@@ -409,7 +410,7 @@ QUnit.module("Mobile Views", ({ beforeEach }) => {
 
             window.scrollTo({ top: 265, left: 0 });
             assert.strictEqual(window.scrollY, 265, "Should have scrolled 265 px vertically");
-            assert.strictEqual(window.screenLeft, 0, "Should be 0 px from left as it is");
+            assert.strictEqual(window.scrollX, 0, "Should be 0 px from left as it is");
 
             // click on m2o field
             await click(fixture, ".o_field_many2one input");
@@ -427,7 +428,55 @@ QUnit.module("Mobile Views", ({ beforeEach }) => {
                 265,
                 "Should have scrolled back to 265 px vertically"
             );
-            assert.strictEqual(window.screenLeft, 0, "Should be 0 px from left as it is");
+            assert.strictEqual(window.scrollX, 0, "Should be 0 px from left as it is");
         }
     );
+
+    QUnit.test("attach_document widget also works inside a dropdown", async (assert) => {
+        let fileInput;
+        patchWithCleanup(AttachDocumentWidget.prototype, {
+            setup() {
+                this._super();
+                fileInput = this.fileInput;
+            },
+        });
+
+        serviceRegistry.add("http", {
+            start: () => ({
+                post: (route, params) => {
+                    assert.step("post");
+                    assert.strictEqual(route, "/web/binary/upload_attachment");
+                    assert.strictEqual(params.model, "partner");
+                    assert.strictEqual(params.id, 1);
+                    return '[{ "id": 5 }, { "id": 2 }]';
+                },
+            }),
+        });
+
+        await makeView({
+            type: "form",
+            resModel: "partner",
+            resId: 1,
+            serverData,
+            arch: `
+                <form>
+                    <header>
+                        <button string="Confirm" />
+                        <widget name="attach_document" string="Attach Document"/>
+                    </header>
+                    <sheet>
+                        <group>
+                            <button name="display_name" />
+                        </group>
+                    </sheet>
+                </form>
+            `,
+        });
+
+        await click(fixture, ".o_statusbar_buttons .dropdown-toggle");
+        await click(fixture, ".o_attach_document");
+        fileInput.dispatchEvent(new Event("change"));
+        await nextTick();
+        assert.verifySteps(["post"]);
+    });
 });

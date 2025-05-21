@@ -108,7 +108,7 @@ class Employee(models.AbstractModel):
             "views": [[self.env.ref('hr_presence.hr_employee_view_kanban').id, "kanban"], [False, "tree"], [False, "form"]],
             'view_mode': 'kanban,tree,form',
             "domain": [],
-            "name": "Employee's Presence to Define",
+            "name": _("Employee's Presence to Define"),
             "search_view_id": [self.env.ref('hr_presence.hr_employee_view_presence_search').id, 'search'],
             "context": {'search_default_group_hr_presence_state': 1,
                         'searchpanel_default_hr_presence_state_display': 'to_define'},
@@ -167,7 +167,7 @@ Do not hesitate to contact your manager or the human resource department.""")
             "res_model": "sms.composer",
             "view_mode": 'form',
             "context": context,
-            "name": "Send SMS Text Message",
+            "name": _("Send SMS Text Message"),
             "target": "new",
         }
 

@@ -3,6 +3,7 @@
 
 from odoo.tests import Form
 from odoo.tests import common
+from odoo.exceptions import ValidationError
 
 
 class TestMrpByProduct(common.TransactionCase):
@@ -26,6 +27,14 @@ class TestMrpByProduct(common.TransactionCase):
         cls.product_a = create_product('Product A', route_ids=[(6, 0, [route_manufacture, route_mto])])
         cls.product_b = create_product('Product B', route_ids=[(6, 0, [route_manufacture, route_mto])])
         cls.product_c_id = create_product('Product C', route_ids=[]).id
+        cls.bom_byproduct = cls.MrpBom.create({
+            'product_tmpl_id': cls.product_a.product_tmpl_id.id,
+            'product_qty': 1.0,
+            'type': 'normal',
+            'product_uom_id': cls.uom_unit_id,
+            'bom_line_ids': [(0, 0, {'product_id': cls.product_c_id, 'product_uom_id': cls.uom_unit_id, 'product_qty': 2})],
+            'byproduct_ids': [(0, 0, {'product_id': cls.product_b.id, 'product_uom_id': cls.uom_unit_id, 'product_qty': 1})]
+            })
 
     def test_00_mrp_byproduct(self):
         """ Test by product with production order."""
@@ -39,22 +48,12 @@ class TestMrpByProduct(common.TransactionCase):
             'bom_line_ids': [(0, 0, {'product_id': self.product_c_id, 'product_uom_id': self.uom_unit_id, 'product_qty': 2})]
             })
 
-        # Create BOM for product A and set byproduct product B
-        bom_product_a = self.MrpBom.create({
-            'product_tmpl_id': self.product_a.product_tmpl_id.id,
-            'product_qty': 1.0,
-            'type': 'normal',
-            'product_uom_id': self.uom_unit_id,
-            'bom_line_ids': [(0, 0, {'product_id': self.product_c_id, 'product_uom_id': self.uom_unit_id, 'product_qty': 2})],
-            'byproduct_ids': [(0, 0, {'product_id': self.product_b.id, 'product_uom_id': self.uom_unit_id, 'product_qty': 1})]
-            })
-
         # Create production order for product A
         # -------------------------------------
 
         mnf_product_a_form = Form(self.env['mrp.production'])
         mnf_product_a_form.product_id = self.product_a
-        mnf_product_a_form.bom_id = bom_product_a
+        mnf_product_a_form.bom_id = self.bom_byproduct
         mnf_product_a_form.product_qty = 2.0
         mnf_product_a = mnf_product_a_form.save()
         mnf_product_a.action_confirm()
@@ -271,3 +270,173 @@ class TestMrpByProduct(common.TransactionCase):
             self.assertEqual(
                 mo.move_byproduct_ids.product_uom_qty, expected_byproduct_qty, "Wrong produced quantity of by-product."
             )
+
+    def test_byproduct_putaway(self):
+        """
+        Test the byproducts are dispatched correctly with putaway rules. We have
+        a byproduct P and two sublocations L01, L02 with a capacity constraint:
+        max 2 x P by location. There is already 1 x P at L01. Process a MO with
+        2 x P as byproducts. They should be redirected to L02
+        """
+
+        self.stock_location = self.env.ref('stock.stock_location_stock')
+        stor_category = self.env['stock.storage.category'].create({
+            'name': 'Super Storage Category',
+            'max_weight': 1000,
+            'product_capacity_ids': [(0, 0, {
+                'product_id': self.product_b.id,
+                'quantity': 2,
+            })]
+        })
+        shelf1_location = self.env['stock.location'].create({
+            'name': 'shelf1',
+            'usage': 'internal',
+            'location_id': self.stock_location.id,
+            'storage_category_id': stor_category.id,
+        })
+        shelf2_location = self.env['stock.location'].create({
+            'name': 'shelf2',
+            'usage': 'internal',
+            'location_id': self.stock_location.id,
+            'storage_category_id': stor_category.id,
+        })
+        self.env['stock.putaway.rule'].create({
+            'product_id': self.product_b.id,
+            'location_in_id': self.stock_location.id,
+            'location_out_id': self.stock_location.id,
+            'storage_category_id': stor_category.id,
+        })
+        self.env['stock.putaway.rule'].create({
+            'product_id': self.product_a.id,
+            'location_in_id': self.stock_location.id,
+            'location_out_id': shelf2_location.id,
+        })
+
+        self.env['stock.quant']._update_available_quantity(self.product_b, shelf1_location, 1)
+
+        mo_form = Form(self.env['mrp.production'])
+        mo_form.product_id = self.product_a
+        mo_form.bom_id = self.bom_byproduct
+        mo_form.product_qty = 2.0
+        mo = mo_form.save()
+        mo.action_confirm()
+        mo_form = Form(mo)
+        mo_form.qty_producing = 2.00
+        mo = mo_form.save()
+
+        mo._post_inventory()
+        byproduct_move_line = mo.move_byproduct_ids.move_line_ids
+        finished_move_line = mo.move_finished_ids.filtered(lambda m: m.product_id == self.product_a).move_line_ids
+        self.assertEqual(byproduct_move_line.location_dest_id, shelf2_location)
+        self.assertEqual(finished_move_line.location_dest_id, shelf2_location)
+
+    def test_check_byproducts_cost_share(self):
+        """
+        Test that byproducts with total cost_share > 100% or a cost_share < 0%
+        will throw a ValidationError
+        """
+        # Create new MO
+        mo_form = Form(self.env['mrp.production'])
+        mo_form.product_id = self.product_a
+        mo_form.product_qty = 2.0
+        mo = mo_form.save()
+
+        # Create product
+        self.product_d = self.env['product.product'].create({
+                'name': 'Product D',
+                'type': 'product'})
+        self.product_e = self.env['product.product'].create({
+                'name': 'Product E',
+                'type': 'product'})
+
+        # Create byproduct
+        byproduct_1 = self.env['stock.move'].create({
+            'name': 'By Product 1',
+            'product_id': self.product_d.id,
+            'product_uom': self.ref('uom.product_uom_unit'),
+            'production_id': mo.id,
+            'location_id': self.ref('stock.stock_location_stock'),
+            'location_dest_id': self.ref('stock.stock_location_output'),
+            'product_uom_qty': 0,
+            'quantity_done': 0
+            })
+        byproduct_2 = self.env['stock.move'].create({
+            'name': 'By Product 2',
+            'product_id': self.product_e.id,
+            'product_uom': self.ref('uom.product_uom_unit'),
+            'production_id': mo.id,
+            'location_id': self.ref('stock.stock_location_stock'),
+            'location_dest_id': self.ref('stock.stock_location_output'),
+            'product_uom_qty': 0,
+            'quantity_done': 0
+            })
+
+        # Update byproduct has cost share > 100%
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            byproduct_1.cost_share = 120
+            mo.write({'move_byproduct_ids': [(4, byproduct_1.id)]})
+
+        # Update byproduct has cost share < 0%
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            byproduct_1.cost_share = -10
+            mo.write({'move_byproduct_ids': [(4, byproduct_1.id)]})
+
+        # Update byproducts have total cost share > 100%
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            byproduct_1.cost_share = 60
+            byproduct_2.cost_share = 70
+            mo.write({'move_byproduct_ids': [(6, 0, [byproduct_1.id, byproduct_2.id])]})
+
+    def test_check_byproducts_cost_share_02(self):
+        """
+        Test that byproducts with total cost_share < 100% with a cancelled moves will don't throw a ValidationError
+        """
+        self.bom_byproduct.byproduct_ids[0].cost_share = 70
+        self.bom_byproduct.byproduct_ids[0].product_qty = 2
+        mo = self.env["mrp.production"].create({
+            'product_id': self.product_a.id,
+            'product_qty': 1.0,
+            'bom_id': self.bom_byproduct.id,
+        })
+        mo.action_confirm()
+        self.assertEqual(mo.state, 'confirmed')
+        mo_form = Form(mo)
+        mo_form.qty_producing = 1
+        mo = mo_form.save()
+        self.assertEqual(mo.state, 'to_close')
+        mo.move_byproduct_ids[0].quantity_done = 1
+        mo.button_mark_done()
+        self.assertEqual(mo.state, 'done')
+
+    def test_3_steps_byproduct(self):
+        """ Test that non-bom byproducts are correctly pushed from
+        post-production to the stock location in 3-steps manufacture. """
+        self.warehouse.manufacture_steps = 'pbm_sam'
+        self.env.user.groups_id += self.env.ref('mrp.group_mrp_byproducts')
+        component, final_product, byproduct = self.env['product.product'].create([{
+            'name': name,
+            'type': 'product'
+        } for name in ['Old Blood', 'Insight', 'Eyes on the Inside']])
+        self.env['stock.quant']._update_available_quantity(component, self.warehouse.lot_stock_id, 1)
+        mo = self.env["mrp.production"].create({
+            'product_id': final_product.id,
+            'product_qty': 1.0,
+        })
+        mo_form = Form(mo)
+        with mo_form.move_raw_ids.new() as line:
+            line.product_id = component
+        with mo_form.move_byproduct_ids.new() as line:
+            line.product_id = byproduct
+        mo = mo_form.save()
+        mo.action_confirm()
+        preprod_picking = mo.picking_ids.filtered(lambda p: p.state == 'assigned')
+        preprod_picking.move_line_ids.qty_done = 1
+        preprod_picking.button_validate()
+        mo.move_raw_ids.quantity_done = 1
+        mo.qty_producing = 1
+        mo.button_mark_done()
+        postprod_picking = mo.picking_ids.filtered(lambda p: p.state == 'assigned')
+
+        self.assertEqual(len(postprod_picking.move_ids), 2)
+        self.assertEqual(postprod_picking.move_ids.product_id, final_product + byproduct)
+        self.assertEqual(postprod_picking.location_dest_id, self.warehouse.lot_stock_id)
